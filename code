@@ -1,0 +1,120 @@
+import numpy as np import pandas as pd
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.model_selection import train_test_split, GridSearchCV, StratifiedKFold from sklearn.metrics import (accuracy_score, classification_report, confusion_matrix,
+roc_curve, f1_score, brier_score_loss, precision_recall_curve, roc_auc_score)
+from sklearn.svm import SVC
+from sklearn.calibration import CalibratedClassifierCV from IPython.display import display, HTML
+import matplotlib.pyplot as plt import seaborn as sns
+import joblib import sys
+def load_data(filename):
+"""Load dataset and handle exceptions.""" try:
+data = pd.read_csv(filename, encoding='unicode_escape').bfill() print("Data successfully loaded.")
+return data if not data.empty else print("Dataset is empty") or None except (FileNotFoundError, Exception) as e:
+print(f"Error: {e}") return None
+def preprocess_data(data):
+"""Encode categorical variables and normalize features.""" if data is None:
+print("Error: No data loaded. Please load the data before preprocessing.") return None, None
+enc = LabelEncoder()
+data['Gender'] = enc.fit_transform(data['Gender']) data['Dataset'] = data['Dataset'].map({2: 0, 1: 1})
+data = (data - data.min()) / (data.max() - data.min()) print("Data preprocessing completed successfully!") return data, enc
+def visualize_data(data):
+"""Visualize summary statistics and correlation matrix.""" if data is None:
+print("Error: No data loaded. Please load and preprocess the data before visualizing.")
+return print(data.describe())
+ 
+data.hist(figsize=(12, 10), bins=30) plt.tight_layout(); plt.show()
+sns.heatmap(data.corr(), annot=True, cmap='coolwarm'); plt.title("Correlation Matrix"); plt.show()
+print("Data visualization completed.") def split_and_scale(data):
+"""Split data and scale features.""" if data is None:
+print("Error: No data available to split and scale. Please load and preprocess the data first.")
+return None, None, None, None, None X, y = data.iloc[:, :-1], data['Dataset']
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42) scaler = StandardScaler().fit(X_train)
+print("Data splitting and scaling completed.")
+return scaler.transform(X_train), scaler.transform(X_test), y_train, y_test, scaler
+
+def train_svm(X_train, y_train):
+"""Train SVM model using hyperparameter tuning.""" if X_train is None or y_train is None:
+print("Error: No training data available. Please load, preprocess, and split the data first.")
+return None param_grid = {
+'C': [0.1, 1, 10],
+'gamma': ['scale', 'auto'],
+'kernel': ['linear', 'rbf', 'poly'],
+'class_weight': ['balanced', {0: 1, 1: 2}]
+}
+model	=	GridSearchCV(SVC(probability=True),	param_grid,	cv=5,	n_jobs=- 1).fit(X_train, y_train)
+print("Model training completed successfully!") return model.best_estimator_
+def calibrate_and_evaluate(model, X_train, y_train, X_test, y_test): """Calibrate the model and evaluate performance."""
+if model is None:
+print("Error: No model available for calibration. Train the model first.") return None
+calibrator = CalibratedClassifierCV(model, method='sigmoid', cv='prefit').fit(X_train, y_train)
+y_proba = calibrator.predict_proba(X_test)[:, 1] y_pred = calibrator.predict(X_test)
+ 
+print(f"Accuracy: {accuracy_score(y_test, y_pred):.2f}, F1 Score: {f1_score(y_test, y_pred):.2f}, Brier Score: {brier_score_loss(y_test, y_proba):.4f}")
+print(classification_report(y_test, y_pred))
+sns.heatmap(confusion_matrix(y_test, y_pred), annot=True, fmt="d", cmap="Blues"); plt.title('Confusion Matrix'); plt.show()
+plt.plot(*roc_curve(y_test,   y_proba)[:2],   label=f"ROC   Curve   (AUC   =
+{roc_auc_score(y_test, y_proba):.2f})"); plt.plot([0, 1], [0, 1], 'k--'); plt.xlabel('False Positive Rate'); plt.ylabel('True Positive Rate'); plt.title('ROC Curve'); plt.legend(); plt.show()
+print("Model calibration and evaluation completed successfully!") return calibrator
+def optimize_threshold(calibrator, X_test, y_test): """Optimize threshold based on F1 score."""
+if calibrator is None:
+print("Error: No calibrated model available. Calibrate the model first.") return
+y_proba = calibrator.predict_proba(X_test)[:, 1]
+precision, recall, thresholds = precision_recall_curve(y_test, y_proba) best_threshold = thresholds[np.argmax(2 * (precision * recall) / (precision + recall))] print(f"Best threshold based on F1 score: {best_threshold:.2f}")
+y_pred_new = (y_proba >= best_threshold).astype(int)
+print(f"Performance	with	F1	threshold:	Accuracy	=	{accuracy_score(y_test, y_pred_new):.2f}, F1 Score = {f1_score(y_test, y_pred_new):.2f}")
+print(confusion_matrix(y_test, y_pred_new)) print("Threshold optimization completed successfully!")
+def cross_validate_and_calibrate(X, y):
+"""Perform cross-validation and calculate average Brier score.""" if X is None or y is None:
+print("Error: No data available for cross-validation. Please load, preprocess, and split the data first.")
+return None scores = []
+kf = StratifiedKFold(n_splits=5)
+for train_idx, test_idx in kf.split(X, y):
+model = SVC(probability=True).fit(X[train_idx], y[train_idx])
+calibrator	=	CalibratedClassifierCV(model,	method='sigmoid', cv='prefit').fit(X[train_idx], y[train_idx])
+scores.append(brier_score_loss(y[test_idx],	calibrator.predict_proba(X[test_idx])[:,
+1]))
+avg_brier_score = np.mean(scores)
+print(f"Average Brier Score across 5 folds: {avg_brier_score:.4f}") print("Cross-validation and calibration completed successfully!") return avg_brier_score
+ 
+def display_logo(): """Display project logo.""" logo = r"""
+""”
+display(HTML(f"""
+<div style="text-align:center;">
+<pre style="font-size:16px;margin-bottom: -10px;">{logo}</pre>
+</div> """))
+def main_menu():
+"""Main interactive CLI menu.""" display_logo()
+display(HTML('<h1 style="font-size:25px; margin-top: 0px; margin-bottom: 20px; text-align:center;">Accurate Liver Disease Predictive Analytics</h1>'))
+print("1. Load Dataset") print("2. Preprocess Data") print("3. Visualize Data") print("4. Train SVM")
+print("5. Calibrate and Evaluate Model")
+print("6. Cross-validate and Calculate Brier Score") print("7. Optimize Threshold")
+print("8. Exit") def main():
+data = None
+X_train, X_test, y_train, y_test, scaler = None, None, None, None, None best_svm, calibrator = None, None
+enc = None while True:
+main_menu()
+choice = input("Select an option: ") if choice == "1":
+data = load_data("indian_liver_patient.csv") elif choice == "2" and data is not None:
+data, enc = preprocess_data(data) elif choice == "2" and data is None:
+print("Warning: You need to load the data before preprocessing!") elif choice == "3" and data is not None:
+visualize_data(data)
+elif choice == "3" and data is None:
+print("Warning: You need to load and preprocess the data before visualizing!") elif choice == "4" and data is not None:
+X_train, X_test, y_train, y_test, scaler = split_and_scale(data) best_svm = train_svm(X_train, y_train)
+ 
+elif choice == "4" and data is None:
+print("Warning: You need to load and preprocess the data before training the model!")
+elif choice == "5" and best_svm is not None:
+calibrator = calibrate_and_evaluate(best_svm, X_train, y_train, X_test, y_test) elif choice == "5" and best_svm is None:
+print("Warning: You need to train the model before calibration!") elif choice == "6" and X_train is not None and y_train is not None:
+avg_brier_score	=	cross_validate_and_calibrate(np.vstack((X_train,	X_test)), np.hstack((y_train, y_test)))
+print(f"Average Brier Score (5 folds): {avg_brier_score:.4f}") elif choice == "6" and X_train is None:
+print("Warning: You need to split and scale the data before cross-validation!") elif choice == "7" and calibrator is not None:
+optimize_threshold(calibrator, X_test, y_test) elif choice == "7" and calibrator is None:
+print("Warning: You need to calibrate the model before optimizing the threshold!") elif choice == "8":
+print("Exiting the program...") try:
+sys.exit()
+except SystemExit: return
+else:
+print("Invalid option or action not available.") if  name	== ' main ':
+main()
